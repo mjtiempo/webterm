@@ -109,4 +109,13 @@ marked `Secure` behind the tunnel's HTTPS.
 server.py              the whole server
 static/index.html      login page + xterm.js wiring
 static/vendor/         xterm.js, addon-fit, addon-web-links
+LICENSE                MIT (this project's own code)
 ```
+
+The vendored bundles keep their own licenses: xterm.js and its addons are
+MIT, and the JetBrains Mono Nerd Font is OFL-1.1 (see
+`static/vendor/LICENSE-JetBrainsMono.txt`).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
