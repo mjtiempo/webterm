@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>webterm</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0a0c'/%3E%3Ctext x='6' y='23' font-size='20' fill='%234ade80'%3E%E2%9D%AF%3C/text%3E%3C/svg%3E" />
+<link rel="preload" href="/vendor/JetBrainsMonoNerdFontMono-Regular.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="stylesheet" href="/vendor/xterm.css" />
+<style>
+  /* JetBrains Mono patched with the Nerd Fonts icon set (v3.5.1, OFL-1.1).
+     Vendored so prompts like powerlevel10k and tools like eza render their
+     private-use glyphs, and at one cell each, so columns stay aligned. */
+  @font-face {
+    font-family: "JetBrainsMono NFM";
+    src: url("/vendor/JetBrainsMonoNerdFontMono-Regular.woff2") format("woff2");
+    font-weight: 400; font-style: normal; font-display: block;
+  }
+  @font-face {
+    font-family: "JetBrainsMono NFM";
+    src: url("/vendor/JetBrainsMonoNerdFontMono-Bold.woff2") format("woff2");
+    font-weight: 700; font-style: normal; font-display: block;
+  }
+  :root {
+    --bg: #0a0a0c;
+    --panel: #121216;
+    --line: #232329;
+    --text: #e7e7ea;
+    --muted: #8b8b95;
+    --accent: #4ade80;
+    --danger: #f87171;
+    --mono: "JetBrainsMono NFM", ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 var(--mono);
+    display: flex; flex-direction: column;
+    height: 100dvh; overflow: hidden;
+  }
+  button {
+    font: inherit; color: var(--text); background: #1b1b21;
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 10px; cursor: pointer;
+  }
+  button:hover { background: #23232a; }
+  button:disabled { opacity: .5; cursor: default; }
+  [hidden] { display: none !important; }
+
+  /* login */
+  #login { flex: 1; display: grid; place-items: center; padding: 24px; }
+  form {
+    width: min(360px, 100%); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 22px;
+  }
+  h1 { margin: 0 0 4px; font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+  h1 .blink { color: var(--accent); animation: blink 1.2s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .sub { margin: 0 0 18px; color: var(--muted); font-size: 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  input[type=password] {
+    width: 100%; font: inherit; color: var(--text); background: #0c0c0f;
+    border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px;
+  }
+  input[type=password]:focus { outline: none; border-color: #3f3f4a; }
+  form button { width: 100%; margin-top: 12px; padding: 9px; }
+  #login-error { min-height: 18px; margin: 10px 0 0; font-size: 12px; color: var(--danger); }
+
+  /* terminal */
+  #app { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .dot.off { background: var(--danger); }
+  #status { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  header button { font-size: 12px; padding: 3px 8px; }
+  #term { flex: 1; min-height: 0; padding: 6px 4px 0 8px; }
+  #term .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
+  .xterm { height: 100%; }
+  footer {
+    padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel);
+    color: var(--muted); font-size: 11px; display: flex; gap: 14px;
+  }
+  @media (max-width: 560px) { footer { display: none; } }
+</style>
+</head>
+<body>
+
+<section id="login" hidden>
+  <form id="login-form">
+    <h1>webterm <span class="blink">&#9615;</span></h1>
+    <p class="sub">sign in to open a shell</p>
+    <label for="password">password</label>
+    <input id="password" type="password" autocomplete="current-password" autofocus required />
+    <button type="submit" id="login-submit">connect</button>
+    <p id="login-error" role="alert"></p>
+  </form>
+</section>
+
+<section id="app" hidden>
+  <header>
+    <span id="dot" class="dot"></span>
+    <span id="status">connecting</span>
+    <span class="spacer"></span>
+    <button id="new" title="kill this shell and start a fresh one">new</button>
+    <button id="logout">sign out</button>
+  </header>
+  <div id="term"></div>
+  <footer>
+    <span>ctrl+shift+c copy</span>
+    <span>ctrl+shift+v paste</span>
+    <span id="meta"></span>
+  </footer>
+</section>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/vendor/addon-web-links.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const loginView = $('login'), appView = $('app'), statusEl = $('status'), dotEl = $('dot');
+
+  let term = null, fit = null, source = null;
+  let terminalId = null;
+  let cursor = -1;              // bytes of output already written to xterm
+  let retryTimer = null;
+  let creating = false;
+
+  // The terminal font has to be in place before xterm measures its cell, or
+  // every icon falls back to a different width and columns drift.
+  const FONT = '"JetBrainsMono NFM", ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace';
+  const fontReady = Promise.race([
+    document.fonts.load('14px "JetBrainsMono NFM"'),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]).catch(() => {});
+
+  // --- tiny api helper ------------------------------------------------------
+
+  async function api(path, { method = 'GET', body } = {}) {
+    const res = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (res.status === 401) { showLogin(); throw new Error('unauthorized'); }
+    if (!res.ok) {
+      let message = `${res.status} ${res.statusText}`;
+      try { const data = await res.json(); if (data && data.error) message = data.error; } catch {}
+      throw Object.assign(new Error(message), { status: res.status });
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  const b64encode = (bytes) => {
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(out);
+  };
+  const b64decode = (text) => {
+    const bin = atob(text);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  };
+  const parse = (text, fallback = null) => {
+    try { return JSON.parse(text); } catch { return fallback; }
+  };
+
+  function setStatus(text, state) {
+    statusEl.textContent = text;
+    dotEl.className = 'dot' + (state ? ' ' + state : '');
+    document.title = state === 'on' ? 'webterm' : `webterm — ${text}`;
+  }
+
+  // --- views ----------------------------------------------------------------
+
+  function showLogin(message) {
+    if (source) { source.close(); source = null; }
+    appView.hidden = true;
+    loginView.hidden = false;
+    $('login-error').textContent = message || '';
+    const input = $('password');
+    input.value = '';
+    input.focus();
+  }
+
+  async function showApp() {
+    loginView.hidden = true;
+    appView.hidden = false;
+    await fontReady;
+    if (!term) buildTerminal();
+    await attach();
+  }
+
+  // --- xterm ----------------------------------------------------------------
+
+  function buildTerminal() {
+    term = new Terminal({
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      fontFamily: FONT,
+      fontSize: 14,
+      lineHeight: 1.25,
+      scrollback: 10000,
+      macOptionIsMeta: true,
+      theme: {
+        background: '#0a0a0c', foreground: '#e7e7ea', cursor: '#4ade80',
+        selectionBackground: '#2c3f33',
+        black: '#1b1b21', red: '#f87171', green: '#4ade80', yellow: '#fbbf24',
+        blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e7e7ea',
+        brightBlack: '#5b5b66', brightRed: '#fca5a5', brightGreen: '#86efac',
+        brightYellow: '#fde68a', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe',
+        brightCyan: '#67e8f9', brightWhite: '#ffffff',
+      },
+    });
+    fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    if (window.WebLinksAddon) term.loadAddon(new WebLinksAddon.WebLinksAddon());
+
+    term.open($('term'));
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown' || !event.ctrlKey || !event.shiftKey) return true;
+      const key = event.key.toLowerCase();
+      if (key === 'c') {
+        const selection = term.getSelection();
+        if (selection) { navigator.clipboard.writeText(selection).catch(() => {}); return false; }
+      }
+      if (key === 'v') {
+        navigator.clipboard.readText().then((text) => { if (text) send(text); }).catch(() => {});
+        return false;
+      }
+      return true;
+    });
+
+    term.onData(send);
+    term.onResize(({ cols, rows }) => {
+      if (!terminalId) return;
+      clearTimeout(term._resizeTimer);
+      term._resizeTimer = setTimeout(() => {
+        api(`/api/terminals/${terminalId}/resize`, { method: 'POST', body: { cols, rows } }).catch(() => {});
+      }, 120);
+    });
+
+    let raf = 0;
+    const refit = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => { try { fit.fit(); } catch {} });
+    };
+    new ResizeObserver(refit).observe($('term'));
+    window.addEventListener('resize', refit);
+    document.fonts.ready.then(() => refit());
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) term.focus(); });
+    term.focus();
+  }
+
+  function send(text) {
+    if (!terminalId) return;
+    const data = b64encode(new TextEncoder().encode(text));
+    api(`/api/terminals/${terminalId}/input`, { method: 'POST', body: { data } })
+      .catch((error) => {
+        if (error.status === 410) setStatus('shell exited', 'off');
+      });
+  }
+
+  // --- terminal lifecycle ---------------------------------------------------
+
+  async function attach() {
+    if (creating) return;
+    creating = true;
+    try {
+      try { fit.fit(); } catch {}
+      terminalId = await ensureTerminal();
+      connect();
+    } catch (error) {
+      if (error.status === 429) setStatus(error.message, 'off');
+    } finally {
+      creating = false;
+    }
+  }
+
+  async function ensureTerminal() {
+    const saved = sessionStorage.getItem('webterm.terminal');
+    if (saved) {
+      const list = await api('/api/terminals');
+      const found = list.terminals.find((t) => t.id === saved && !t.closed);
+      if (found) return found.id;
+      sessionStorage.removeItem('webterm.terminal');
+    }
+    cursor = -1;
+    const created = await api('/api/terminals', {
+      method: 'POST',
+      body: { cols: term.cols, rows: term.rows },
+    });
+    sessionStorage.setItem('webterm.terminal', created.id);
+    return created.id;
+  }
+
+  function connect() {
+    if (source) source.close();
+    clearTimeout(retryTimer);
+    setStatus('connecting', '');
+    const url = `/api/terminals/${terminalId}/stream` + (cursor >= 0 ? `?cursor=${cursor}` : '');
+    source = new EventSource(url);
+
+    source.addEventListener('ready', (event) => {
+      const info = parse(event.data, {});
+      $('meta').textContent = `${info.shell} · pid ${info.pid} · ${terminalId}`;
+      if (info.closed) setStatus(`shell exited${info.exitCode !== null ? ` (${info.exitCode})` : ''}`, 'off');
+      else { setStatus('connected', 'on'); term.focus(); }
+    });
+
+    source.addEventListener('reset', (event) => {
+      const data = parse(event.data, {});
+      cursor = typeof data.cursor === 'number' ? data.cursor : 0;
+      term.reset();
+    });
+
+    source.addEventListener('output', (event) => {
+      const bytes = b64decode(event.data);
+      cursor += bytes.length;
+      term.write(bytes);
+    });
+
+    source.addEventListener('exit', (event) => {
+      const info = parse(event.data, {});
+      term.write(`\r\n\x1b[2m[process exited${info.code !== null && info.code !== undefined ? ` with code ${info.code}` : ''}]\x1b[0m\r\n`);
+      setStatus('shell exited', 'off');
+      // newest browsers reconnect on their own; we want the status to stick
+      if (source) { source.close(); source = null; }
+    });
+
+    source.onerror = () => {
+      if (!source) return;
+      source.close();
+      source = null;
+      setStatus('reconnecting…', '');
+      retryTimer = setTimeout(connect, 1000);
+    };
+  }
+
+  // --- auth -----------------------------------------------------------------
+
+  $('login-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = $('login-submit');
+    const error = $('login-error');
+    button.disabled = true;
+    error.textContent = '';
+    try {
+      await api('/api/login', { method: 'POST', body: { password: $('password').value } });
+      await showApp();
+    } catch (failure) {
+      error.textContent = failure.status === 405 || failure.status === 403
+        ? 'request rejected'
+        : failure.message === 'unauthorized' ? 'invalid password' : failure.message;
+      $('password').select();
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $('logout').addEventListener('click', async () => {
+    try { await api('/api/logout', { method: 'POST', body: {} }); } catch {}
+    sessionStorage.removeItem('webterm.terminal');
+    if (source) { source.close(); source = null; }
+    if (term) { term.dispose(); term = null; fit = null; }
+    terminalId = null;
+    cursor = -1;
+    showLogin();
+  });
+
+  $('new').addEventListener('click', async () => {
+    if (terminalId) {
+      try { await api(`/api/terminals/${terminalId}`, { method: 'DELETE' }); } catch {}
+    }
+    sessionStorage.removeItem('webterm.terminal');
+    terminalId = null;
+    cursor = -1;
+    if (term) { term.reset(); }
+    setStatus('starting…', '');
+    await attach();
+  });
+
+  // --- boot -----------------------------------------------------------------
+
+  (async () => {
+    $('login').hidden = false;
+    try {
+      const session = await api('/api/session');
+      if (session.authenticated) await showApp();
+      else showLogin();
+    } catch {
+      showLogin();
+    }
+  })();
+})();
+</script>
+</body>
+</html>
